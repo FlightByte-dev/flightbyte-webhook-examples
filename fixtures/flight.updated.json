@@ -1,0 +1,55 @@
+{
+  "id": "evt_2f0c8a4e-6f1d-4d0d-9a3b-0f1e2d3c4b5a",
+  "type": "flight.updated",
+  "createdAt": "2026-09-12T09:26:11.000Z",
+  "subscriptionId": "sub_7fd9fa92faf3475db99b",
+  "flightKey": "TK1848:2026-09-12@ATH-IST",
+  "flight": {
+    "flightKey": "TK1848:2026-09-12@ATH-IST",
+    "carrier": { "iata": "TK", "icao": "THY", "name": "Turkish Airlines" },
+    "flightNumber": "1848",
+    "date": "2026-09-12",
+    "status": { "code": "A", "label": "Active", "phase": "scheduled", "delayed": true },
+    "departure": {
+      "airport": { "iata": "ATH", "icao": "LGAV", "name": "Athens International Airport", "city": "Athens", "timezone": "Europe/Athens" },
+      "terminal": "M",
+      "gate": "A22",
+      "times": {
+        "scheduledGate": { "utc": "2026-09-12T09:15:00Z", "local": "2026-09-12T12:15:00+03:00", "timezone": "Europe/Athens" },
+        "estimatedGate": { "utc": "2026-09-12T09:45:00Z", "local": "2026-09-12T12:45:00+03:00", "timezone": "Europe/Athens" }
+      },
+      "delayMinutes": 30
+    },
+    "arrival": {
+      "airport": { "iata": "IST", "icao": "LTFM", "name": "Istanbul Airport", "city": "Istanbul", "timezone": "Europe/Istanbul" },
+      "terminal": null,
+      "gate": null,
+      "baggage": null,
+      "times": {
+        "scheduledGate": { "utc": "2026-09-12T10:45:00Z", "local": "2026-09-12T13:45:00+03:00", "timezone": "Europe/Istanbul" },
+        "estimatedGate": { "utc": "2026-09-12T11:15:00Z", "local": "2026-09-12T14:15:00+03:00", "timezone": "Europe/Istanbul" }
+      },
+      "delayMinutes": 30
+    },
+    "fetchedAt": "2026-09-12T09:26:10.000Z"
+  },
+  "changes": [
+    {
+      "type": "departure.gate.changed",
+      "path": "departure.gate",
+      "from": "A11",
+      "to": "A22",
+      "message": "Departure gate changed from A11 to A22"
+    },
+    {
+      "type": "arrival.estimated.changed",
+      "path": "arrival.times.estimatedGate",
+      "from": "2026-09-12T10:45:00Z",
+      "to": "2026-09-12T11:15:00Z",
+      "deltaMinutes": 30,
+      "message": "Arrival estimated gate time changed from 2026-09-12T10:45:00Z to 2026-09-12T11:15:00Z"
+    }
+  ],
+  "previousFetchedAt": "2026-09-12T09:16:04.000Z",
+  "metadata": { "bookingId": "BK-1042" }
+}
