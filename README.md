@@ -59,6 +59,8 @@ curl https://api.flightbyte.dev/v1/subscriptions \
 
 The response includes the `secret` to put in `FLIGHTBYTE_WEBHOOK_SECRET`. `POST /v1/subscriptions/{id}/test` sends a `subscription.test` event on demand.
 
+With the [FlightByte MCP server](https://flightbyte.dev/docs/mcp) connected, an assistant can do this for you: ask Claude, Cursor or VS Code to watch a flight and send its changes to your tunnel URL, then to send a test event and show you the delivery log. In Claude, add FlightByte from the [connector directory](https://claude.ai/directory/flightbyte).
+
 ## How the signature works
 
 ```
