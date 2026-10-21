@@ -1,0 +1,848 @@
+{
+  "name": "Text airport pickup drivers when flights depart, land or change, with FlightByte",
+  "nodes": [
+    {
+      "id": "bc993cc6-896d-467f-a974-2f9807fe92c0",
+      "name": "About this workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        -260
+      ],
+      "parameters": {
+        "content": "## Text airport pickup drivers when flights depart, land or change\n\nFor transfer and chauffeur companies whose drivers wait at arrivals. FlightByte watches the passenger's flight and calls this workflow only when something matters to the driver.\n\n### How it works\n1. The form books a pickup. FlightByte watches the flight for arrival changes only, and the driver's phone goes to the n8n data table `flightbyte_pickups`.\n2. Each change arrives as a signed webhook. The workflow checks the signature, answers `204` and skips retries.\n3. The driver gets one SMS or WhatsApp when the flight leaves, when the landing time moves by ten minutes or more, when it reaches the gate, when the bags have a belt, or when it is cancelled or diverted.\n4. When the flight is over, its row is deleted.\n\n### Setup\n**1. FlightByte API.** In *Watch the flight*, create a **Custom Auth** credential. It adds your key to the request and gives every watched flight the same signing secret:\n```json\n{\n  \"headers\": { \"x-api-key\": \"fb_live_…\" },\n  \"body\": { \"secret\": \"whsec_…\" }\n}\n```\nMake the secret up, for example `whsec_` followed by `openssl rand -hex 24`.\n\n**2. Webhook secret.** In *Sign the raw body*, create a **Crypto** credential and paste the same `whsec_…` as its *Hmac Secret*.\n\n**3. Sender.** Set your Twilio number in *Text the driver*. Turn on *To WhatsApp* to send WhatsApp messages instead.\n\n**4. Go.** Publish, open the form's production URL and book a pickup.\n\n### Customization tips\n- Change `MIN_SHIFT_MINUTES` at the top of *Write the driver's text* to text the driver more or less often.\n- To take bookings from your own system, swap the form and map its columns in *Build the request*.\n\n[Step-by-step guide](https://flightbyte.dev/guides/flight-change-alerts-n8n?utm_source=n8n&utm_medium=template&utm_campaign=airport-pickup#airport-pickup) · [Free API key](https://flightbyte.dev/get-api-key?plan=free&utm_source=n8n&utm_medium=template&utm_campaign=airport-pickup)",
+        "width": 560,
+        "height": 1180
+      }
+    },
+    {
+      "id": "01c1356d-953c-41e7-a815-dd047af109a1",
+      "name": "Book",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -260
+      ],
+      "parameters": {
+        "content": "## 1. Book a pickup\nThe date is the departure date, local to the departure airport. The driver's phone goes to `flightbyte_pickups`.",
+        "width": 1540,
+        "height": 460,
+        "color": 7
+      }
+    },
+    {
+      "id": "47b5d25d-992d-4a48-ac51-7fedad39ae7a",
+      "name": "Pickup form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        -40
+      ],
+      "webhookId": "8bea9614-9d00-41fc-ac5f-a6c509301732",
+      "parameters": {
+        "formTitle": "Book an airport pickup",
+        "formDescription": "The driver gets a text when the flight leaves, when the landing time moves and when it reaches the gate.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Flight number",
+              "placeholder": "TK1848",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Departure date",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Departure airport",
+              "placeholder": "IST (only if the flight number flies several legs that day)"
+            },
+            {
+              "fieldLabel": "Passenger name"
+            },
+            {
+              "fieldLabel": "Driver's mobile phone",
+              "placeholder": "+905321234567",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "path": "book-a-pickup",
+          "buttonLabel": "Book the pickup"
+        }
+      }
+    },
+    {
+      "id": "bfbeaa1a-692d-45f7-a7f9-1b99976bddbe",
+      "name": "Make sure the table exists",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -40
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "flightbyte_pickups",
+        "columns": {
+          "column": [
+            {
+              "name": "subscriptionId",
+              "type": "string"
+            },
+            {
+              "name": "passengerName",
+              "type": "string"
+            },
+            {
+              "name": "driverPhone",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    },
+    {
+      "id": "efda2df8-a37b-4c8c-a94f-4c1ca217386b",
+      "name": "Build the request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        -40
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5c556a63-f9a7-4dcf-a21f-9cde2c24b96b",
+              "name": "webhookUrl",
+              "type": "string",
+              "value": "={{ $execution.resumeUrl.split('/webhook-waiting/')[0] }}/webhook/flightbyte-pickup"
+            },
+            {
+              "id": "4a0f9e72-5b41-4e52-abe9-ffafff4e8bb5",
+              "name": "carrier",
+              "type": "string",
+              "value": "={{ $('Pickup form').item.json[\"Flight number\"].replace(/\\s+/g, '').toUpperCase().slice(0, 2) }}"
+            },
+            {
+              "id": "13063b48-7722-4432-aa11-82c37df4232b",
+              "name": "flightNumber",
+              "type": "string",
+              "value": "={{ $('Pickup form').item.json[\"Flight number\"].replace(/\\s+/g, '').toUpperCase().slice(2) }}"
+            },
+            {
+              "id": "0e1fde5c-10b1-40b9-a309-974fd638f61f",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $('Pickup form').item.json[\"Departure date\"] }}"
+            },
+            {
+              "id": "110ed438-6fa9-4a39-a475-b292a81d831c",
+              "name": "origin",
+              "type": "string",
+              "value": "={{ ($('Pickup form').item.json[\"Departure airport\"] ?? '').trim().toUpperCase() }}"
+            },
+            {
+              "id": "9d3750f8-32e5-4a58-a965-076c6939d4d1",
+              "name": "passengerName",
+              "type": "string",
+              "value": "={{ $('Pickup form').item.json[\"Passenger name\"] ?? '' }}"
+            },
+            {
+              "id": "618b3462-b08d-4c78-a7a5-0be2b5fcacea",
+              "name": "driverPhone",
+              "type": "string",
+              "value": "={{ $('Pickup form').item.json[\"Driver's mobile phone\"] ?? '' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5a8090ef-b84c-4463-acd4-dc048a780809",
+      "name": "Watch the flight",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.flightbyte.dev/v1/subscriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ carrier: $json.carrier, flightNumber: $json.flightNumber, date: $json.date, ...($json.origin ? { origin: $json.origin } : {}), webhookUrl: $json.webhookUrl, events: ['flight.departed','flight.arrived','flight.cancelled','flight.diverted','arrival.estimated.changed','arrival.terminal.changed','arrival.baggage.changed'] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "49f2ec16-3396-4d4f-ae2d-20f575889295",
+      "name": "Watching?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cce92b05-f8f4-4149-a775-c0d07ffde4a6",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 300,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4aadf5de-7477-4386-ab86-c3c518228d32",
+      "name": "Remember who to tell",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -130
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_pickups"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subscriptionId": "={{ $json.body.id }}",
+            "passengerName": "={{ $('Build the request').item.json.passengerName }}",
+            "driverPhone": "={{ $('Build the request').item.json.driverPhone }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subscriptionId",
+              "displayName": "subscriptionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "passengerName",
+              "displayName": "passengerName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "driverPhone",
+              "displayName": "driverPhone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fece5340-2576-4cc1-a343-d2698d3661ad",
+      "name": "Show the watch",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -130
+      ],
+      "webhookId": "c7e0104f-fed1-4ac0-adbd-784f88dc7c24",
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "=Watching {{ $('Watch the flight').item.json.body.carrier }}{{ $('Watch the flight').item.json.body.flightNumber }} on {{ $('Watch the flight').item.json.body.date }}",
+        "completionMessage": "={{ $('Watch the flight').item.json.body.status === 'pending' ? \"The airline has not published this flight yet. FlightByte starts watching it as soon as it appears.\" : \"Changes to this flight will reach this workflow as they happen.\" }}\n\nSubscription {{ $('Watch the flight').item.json.body.id }}"
+      }
+    },
+    {
+      "id": "b1a448fd-4ba1-4163-aaec-cbc0757c68ae",
+      "name": "Show the error",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        50
+      ],
+      "webhookId": "db4d48d6-56e6-4a45-a3bb-7434f0bd760f",
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Could not watch this flight",
+        "completionMessage": "={{ [].concat($json.body.message ?? `FlightByte answered ${$json.statusCode}`).join(' ') }}"
+      }
+    },
+    {
+      "id": "653d9bd0-69a5-409f-aea5-f112bf84ce93",
+      "name": "Verify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        220
+      ],
+      "parameters": {
+        "content": "## Verify, then answer\nChecks FlightByte's HMAC signature on the raw body, refuses anything older than five minutes, answers `204` and skips retries.",
+        "width": 1340,
+        "height": 440,
+        "color": 7
+      }
+    },
+    {
+      "id": "7a75bc25-d648-439d-aeeb-50dae3e2fb54",
+      "name": "FlightByte webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        420
+      ],
+      "webhookId": "45942407-4fce-4bf7-a318-f25903dddc31",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "flightbyte-pickup",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "f50e43e0-1a8e-4823-a257-6d537c050502",
+      "name": "Raw body as text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        420
+      ],
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "rawBody",
+        "options": {
+          "keepSource": "json"
+        }
+      }
+    },
+    {
+      "id": "a441ce5e-7d9c-470f-ace3-ec2b9072e78f",
+      "name": "Sign the raw body",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        440,
+        420
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.headers['x-flightbyte-timestamp'] }}.{{ $json.rawBody }}",
+        "dataPropertyName": "expectedSignature",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "730cd822-9898-4a70-a38f-748d129bda21",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a1f9ed23-d1a3-44de-a4a7-2fcd18207f22",
+              "leftValue": "={{ $json.expectedSignature }}",
+              "rightValue": "={{ String($json.headers['x-flightbyte-signature'] ?? '').split('v1=')[1] ?? '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "ca1b2ba8-edce-4e32-a582-6804ea243782",
+              "leftValue": "={{ Math.abs($now.toSeconds() - Number($json.headers['x-flightbyte-timestamp'])) }}",
+              "rightValue": 300,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a59a06d7-682b-4ae6-a1ae-5ffe7c22a231",
+      "name": "Accept (204)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        330
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 204
+        }
+      }
+    },
+    {
+      "id": "70fe17a2-a992-4698-adb3-937f3815d94a",
+      "name": "Reject (401)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        510
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "09c9f6fd-5e0b-451c-a8f8-fac51281cb7d",
+      "name": "Skip retries already handled",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        330
+      ],
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.body.id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "fba7ce37-9ae2-4e64-ace9-43fb91f0b521",
+      "name": "Text",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        220
+      ],
+      "parameters": {
+        "content": "## 2. Text the driver\nArrival-time moves under ten minutes are skipped. Finished flights leave the table.",
+        "width": 920,
+        "height": 480,
+        "color": 7
+      }
+    },
+    {
+      "id": "5eb7c92c-33a3-46f6-a633-52b95727713a",
+      "name": "Event type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1340,
+        330
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0c37a9d9-2e9b-4eb8-ab08-9eac98c81e83",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "flight.updated",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Flight changed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "25d8ba35-0bf3-4d21-a6f5-2742512df56a",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "subscription.completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Watch completed"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4dce5cb7-728a-4a93-a9f5-5ba5a22fd555",
+      "name": "Look up the pickup",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        330
+      ],
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_pickups"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subscriptionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.subscriptionId }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "id": "2fe31ecc-5118-4c60-aa21-585e09b7facd",
+      "name": "Write the driver's text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        330
+      ],
+      "parameters": {
+        "jsCode": "// Writes one text for the driver from the changes a driver cares about,\n// and nothing when there is nothing worth a text.\n\n// Arrival time moves smaller than this are not worth a text.\nconst MIN_SHIFT_MINUTES = 10;\n\nconst texts = [];\nfor (const [index, item] of $input.all().entries()) {\n  const event = $('Event type').itemMatching(index).json.body;\n  const flight = event.flight;\n  const pickup = item.json; // the row the form saved: passengerName, driverPhone\n  if (!pickup.driverPhone) continue;\n\n  const arr = flight.arrival;\n  const number = `${flight.carrier.iata}${flight.flightNumber}`;\n  const from = flight.departure.airport.city ?? flight.departure.airport.iata;\n  const airport = arr.airport.iata;\n  // Webhook times are UTC; the driver wants the arrival airport's clock.\n  const clock = (utc) => DateTime.fromISO(utc).setZone(arr.airport.timezone).toFormat('HH:mm');\n  const lands = (arr.times.estimatedGate ?? arr.times.scheduledGate)?.utc;\n  const find = (type, path) =>\n    event.changes.find((change) => change.type === type && (!path || change.path.endsWith(path)));\n\n  const lines = [];\n  if (find('flight.cancelled')) {\n    lines.push(`${number} from ${from} is cancelled. Pickup on hold.`);\n  } else if (find('flight.diverted')) {\n    const to = flight.diverted ? ` to ${flight.diverted.airport.iata}` : '';\n    lines.push(`${number} from ${from} is diverted${to}. Pickup on hold.`);\n  } else {\n    const moved = find('arrival.estimated.changed', 'Gate') ?? find('arrival.estimated.changed');\n    if (find('flight.arrived')) {\n      lines.push(`${number} is at the gate at ${airport}${arr.terminal ? `, terminal ${arr.terminal}` : ''}.`);\n    } else if (find('flight.departed')) {\n      lines.push(`${number} has left ${from}.${lands ? ` Lands about ${clock(lands)} at ${airport}.` : ''}`);\n    } else if (moved?.from && moved.to && Math.abs(moved.deltaMinutes ?? 0) >= MIN_SHIFT_MINUTES) {\n      lines.push(`${number} now lands about ${clock(moved.to)} at ${airport} (was ${clock(moved.from)}).`);\n    }\n    const terminal = find('arrival.terminal.changed');\n    if (terminal?.to && !find('flight.arrived')) lines.push(`Arrives at terminal ${terminal.to}.`);\n    const belt = find('arrival.baggage.changed');\n    if (belt?.to) lines.push(`Bags on belt ${belt.to}.`);\n  }\n  if (lines.length === 0) continue;\n  if (pickup.passengerName) lines.push(`Passenger: ${pickup.passengerName}.`);\n\n  texts.push({ json: { flight: number, to: pickup.driverPhone, text: lines.join(' ') } });\n}\nreturn texts;\n"
+      }
+    },
+    {
+      "id": "29bdf33f-fb24-4b4c-ab46-8e82da0af7ce",
+      "name": "Text the driver",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        330
+      ],
+      "parameters": {
+        "from": "+15550000000",
+        "to": "={{ $json.to }}",
+        "toWhatsapp": false,
+        "message": "={{ $json.text }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "1e4bb3cd-37d7-4e78-a126-a229da3b1ed7",
+      "name": "Forget the pickup",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        540
+      ],
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_pickups"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subscriptionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.subscriptionId }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Pickup form": {
+      "main": [
+        [
+          {
+            "node": "Make sure the table exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make sure the table exists": {
+      "main": [
+        [
+          {
+            "node": "Build the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the request": {
+      "main": [
+        [
+          {
+            "node": "Watch the flight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watch the flight": {
+      "main": [
+        [
+          {
+            "node": "Watching?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watching?": {
+      "main": [
+        [
+          {
+            "node": "Remember who to tell",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Show the error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remember who to tell": {
+      "main": [
+        [
+          {
+            "node": "Show the watch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FlightByte webhook": {
+      "main": [
+        [
+          {
+            "node": "Raw body as text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raw body as text": {
+      "main": [
+        [
+          {
+            "node": "Sign the raw body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the raw body": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept (204)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject (401)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept (204)": {
+      "main": [
+        [
+          {
+            "node": "Skip retries already handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip retries already handled": {
+      "main": [
+        [
+          {
+            "node": "Event type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event type": {
+      "main": [
+        [
+          {
+            "node": "Look up the pickup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forget the pickup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up the pickup": {
+      "main": [
+        [
+          {
+            "node": "Write the driver's text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write the driver's text": {
+      "main": [
+        [
+          {
+            "node": "Text the driver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

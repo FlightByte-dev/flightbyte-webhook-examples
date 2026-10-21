@@ -1,6 +1,6 @@
 # FlightByte webhook examples
 
-Receivers for [FlightByte](https://flightbyte.dev) webhooks in Node.js, Python and Go, plus a script that sends signed test events so you can exercise a receiver before you have an API key.
+Receivers for [FlightByte](https://flightbyte.dev) webhooks in Node.js, Python and Go, plus a script that sends signed test events so you can exercise a receiver before you have an API key. Two [n8n templates](#n8n-templates) do the same with n8n's built-in nodes.
 
 Each receiver does the four things a webhook endpoint has to get right:
 
@@ -71,6 +71,29 @@ v1 = HMAC-SHA256(secret, "<t>." + <raw body bytes>)
 Verify against the bytes you received, before any JSON parsing. Reject when `|now - t|` is more than a few minutes. The same six headers are also sent under the legacy `x-flightradar-*` names; new code should read `x-flightbyte-*`.
 
 Full details: [Webhooks](https://flightbyte.dev/docs/webhooks) in the FlightByte docs.
+
+## n8n templates
+
+`n8n/` holds two n8n workflows that receive the same webhooks with n8n's built-in nodes. They verify the signature on the raw body, answer `204` and skip retries, then tell people:
+
+- `n8n/workflows/flight-change-alerts.json`: a form adds a flight. Every change goes to Slack, gate, time, delay, cancellation and diversion go to the passenger by email, and cancellations, diversions and long delays by SMS.
+- `n8n/workflows/airport-pickup.json`: a form books a pickup. The driver gets an SMS or WhatsApp when the flight leaves, when the landing time moves, at the gate and at the baggage belt.
+
+Contact details stay in n8n data tables. FlightByte only sees the flight and a booking reference. Setup is in each workflow's yellow note and in the [n8n guide](https://flightbyte.dev/guides/flight-change-alerts-n8n).
+
+```bash
+node n8n/build.mjs        # n8n/build.mjs + n8n/code/*.js → n8n/workflows/*.json
+node n8n/test/run.mjs     # both workflows on a real n8n in Docker; needs Docker only
+```
+
+The JSON is generated, so edit `n8n/build.mjs` or the Code node sources in `n8n/code/`, rebuild, and run the test. The test does the following:
+
+- starts n8n 2.44 in Docker;
+- swaps Slack, SendGrid, Twilio and the FlightByte API for a local stub;
+- submits both forms and sends signed events, including a real TK1 snapshot from `n8n/test/fixtures/`;
+- checks who is told what, and that tampered, stale and repeated deliveries are refused or skipped.
+
+flightbyte.dev serves copies of the JSON from its own repo; `npm run sync:n8n` there pulls them in.
 
 ## Fixture
 
