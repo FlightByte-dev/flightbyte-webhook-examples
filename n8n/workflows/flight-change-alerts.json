@@ -1,0 +1,1146 @@
+{
+  "name": "Send flight change alerts to Slack, email and SMS with FlightByte",
+  "nodes": [
+    {
+      "id": "7a3ea27f-2322-4ec9-a905-a2fc3f5b69bf",
+      "name": "About this workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        -260
+      ],
+      "parameters": {
+        "content": "## Send flight change alerts to Slack, email and SMS\n\nFor travel agencies, transfer companies and corporate travel teams. FlightByte watches each flight and calls this workflow only when something changes, with a list of exactly what changed. Nothing runs on a schedule.\n\n### How it works\n1. The form adds a flight. FlightByte starts watching it, and the passenger's contact details go to the n8n data table `flightbyte_passengers`. FlightByte only sees the flight and the booking reference.\n2. Each change arrives as a signed webhook. The workflow checks the signature, answers `204` and skips retries.\n3. Every change goes to Slack. Gate, time, delay, cancellation and diversion go to the passenger by email. Cancellations, diversions and arrival delays of an hour or more also go by SMS.\n4. When the flight is over, its row is deleted.\n\n### Setup\n**1. FlightByte API.** In *Watch the flight*, create a **Custom Auth** credential. It adds your key to the request and gives every watched flight the same signing secret:\n```json\n{\n  \"headers\": { \"x-api-key\": \"fb_live_…\" },\n  \"body\": { \"secret\": \"whsec_…\" }\n}\n```\nMake the secret up, for example `whsec_` followed by `openssl rand -hex 24`.\n\n**2. Webhook secret.** In *Sign the raw body*, create a **Crypto** credential and paste the same `whsec_…` as its *Hmac Secret*.\n\n**3. Senders.** Pick your Slack channel in the three Slack nodes, and set the sender in *Email the passenger* and *Text the passenger*.\n\n**4. Go.** Publish, open the form's production URL and add a flight. `POST /v1/subscriptions/{id}/test` sends a test event to Slack.\n\n### Customization tips\n- Change who hears what in the list at the top of *Write the messages*.\n- Swap the form for Google Sheets, Airtable or your booking system, and map its columns in *Build the request*.\n\n[Step-by-step guide](https://flightbyte.dev/guides/flight-change-alerts-n8n?utm_source=n8n&utm_medium=template&utm_campaign=flight-change-alerts) · [Free API key](https://flightbyte.dev/get-api-key?plan=free&utm_source=n8n&utm_medium=template&utm_campaign=flight-change-alerts)",
+        "width": 560,
+        "height": 1240
+      }
+    },
+    {
+      "id": "35d6f534-01e3-4ad7-a501-41e20362b040",
+      "name": "Watch a flight",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -260
+      ],
+      "parameters": {
+        "content": "## 1. Watch a flight\nThe answers become a FlightByte subscription and a row in `flightbyte_passengers`.",
+        "width": 1540,
+        "height": 460,
+        "color": 7
+      }
+    },
+    {
+      "id": "7f56701f-1091-4c26-a08e-6cf84ed3755e",
+      "name": "Booking form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        -40
+      ],
+      "webhookId": "b9ed20a2-9946-4e5f-adf5-9b6ed9929baf",
+      "parameters": {
+        "formTitle": "Watch a flight",
+        "formDescription": "The passenger hears about gate changes, delays and cancellations as they happen.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Flight number",
+              "placeholder": "TK1848",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Departure date",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Departure airport",
+              "placeholder": "IST (only if the flight number flies several legs that day)"
+            },
+            {
+              "fieldLabel": "Passenger name"
+            },
+            {
+              "fieldLabel": "Email",
+              "fieldType": "email"
+            },
+            {
+              "fieldLabel": "Mobile phone",
+              "placeholder": "+905321234567"
+            },
+            {
+              "fieldLabel": "Booking reference"
+            }
+          ]
+        },
+        "options": {
+          "path": "watch-a-flight",
+          "buttonLabel": "Watch this flight"
+        }
+      }
+    },
+    {
+      "id": "dc7e26f7-7af6-40bf-af92-16684357ba4b",
+      "name": "Make sure the table exists",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        220,
+        -40
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "flightbyte_passengers",
+        "columns": {
+          "column": [
+            {
+              "name": "subscriptionId",
+              "type": "string"
+            },
+            {
+              "name": "passengerName",
+              "type": "string"
+            },
+            {
+              "name": "email",
+              "type": "string"
+            },
+            {
+              "name": "phone",
+              "type": "string"
+            },
+            {
+              "name": "bookingRef",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    },
+    {
+      "id": "7b9bd048-3465-4346-af1f-9561d6f1dcac",
+      "name": "Build the request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        -40
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "657a6350-9793-4fd9-aec9-3c2ef232c0e7",
+              "name": "webhookUrl",
+              "type": "string",
+              "value": "={{ $execution.resumeUrl.split('/webhook-waiting/')[0] }}/webhook/flightbyte-alerts"
+            },
+            {
+              "id": "97cfda73-02a0-49e4-ad82-32fe8969371e",
+              "name": "carrier",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Flight number\"].replace(/\\s+/g, '').toUpperCase().slice(0, 2) }}"
+            },
+            {
+              "id": "525b0751-a493-485b-a306-c2fa79181a4a",
+              "name": "flightNumber",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Flight number\"].replace(/\\s+/g, '').toUpperCase().slice(2) }}"
+            },
+            {
+              "id": "6d4121c8-81cc-4ec7-aed3-cfa47e6ce85a",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Departure date\"] }}"
+            },
+            {
+              "id": "f3998ba3-0bef-46e0-ad77-5ab8a9d6bd9d",
+              "name": "origin",
+              "type": "string",
+              "value": "={{ ($('Booking form').item.json[\"Departure airport\"] ?? '').trim().toUpperCase() }}"
+            },
+            {
+              "id": "1a91a574-b49b-40f6-a7ee-d8135a6cfce4",
+              "name": "metadata",
+              "type": "object",
+              "value": "={{ $('Booking form').item.json[\"Booking reference\"] ? { bookingRef: $('Booking form').item.json[\"Booking reference\"] } : {} }}"
+            },
+            {
+              "id": "2d42984d-6bc4-4751-a67c-8ae41cb91fb6",
+              "name": "passengerName",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Passenger name\"] ?? '' }}"
+            },
+            {
+              "id": "7a6b849f-7d30-49ea-a737-aad989d55ec1",
+              "name": "email",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Email\"] ?? '' }}"
+            },
+            {
+              "id": "7d9b9871-61ee-4648-a40d-8da1f363b509",
+              "name": "phone",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Mobile phone\"] ?? '' }}"
+            },
+            {
+              "id": "4a51b07f-975b-4247-a0bd-530141c6fd3a",
+              "name": "bookingRef",
+              "type": "string",
+              "value": "={{ $('Booking form').item.json[\"Booking reference\"] ?? '' }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d2e0f17b-ae79-4df4-a55a-93d4bbafbd05",
+      "name": "Watch the flight",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.flightbyte.dev/v1/subscriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ carrier: $json.carrier, flightNumber: $json.flightNumber, date: $json.date, ...($json.origin ? { origin: $json.origin } : {}), webhookUrl: $json.webhookUrl, metadata: $json.metadata }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "568efbb9-7097-49f9-a358-35e4d50366d1",
+      "name": "Watching?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        -40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a03765f2-8e50-4706-a14d-a419bce5922a",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 300,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "478e2e76-2300-4403-a78d-4f3032509490",
+      "name": "Remember who to tell",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -130
+      ],
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_passengers"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "subscriptionId": "={{ $json.body.id }}",
+            "passengerName": "={{ $('Build the request').item.json.passengerName }}",
+            "email": "={{ $('Build the request').item.json.email }}",
+            "phone": "={{ $('Build the request').item.json.phone }}",
+            "bookingRef": "={{ $('Build the request').item.json.bookingRef }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "subscriptionId",
+              "displayName": "subscriptionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "passengerName",
+              "displayName": "passengerName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bookingRef",
+              "displayName": "bookingRef",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5f64c629-2cc0-4b9f-abb3-92a9eb9c9f4b",
+      "name": "Show the watch",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -130
+      ],
+      "webhookId": "cac2d843-8770-49f6-af3c-1776006a4f09",
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "=Watching {{ $('Watch the flight').item.json.body.carrier }}{{ $('Watch the flight').item.json.body.flightNumber }} on {{ $('Watch the flight').item.json.body.date }}",
+        "completionMessage": "={{ $('Watch the flight').item.json.body.status === 'pending' ? \"The airline has not published this flight yet. FlightByte starts watching it as soon as it appears.\" : \"Changes to this flight will reach this workflow as they happen.\" }}\n\nSubscription {{ $('Watch the flight').item.json.body.id }}"
+      }
+    },
+    {
+      "id": "a5bf6998-b477-43ad-a6e2-6267e7b44970",
+      "name": "Show the error",
+      "type": "n8n-nodes-base.form",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        50
+      ],
+      "webhookId": "1abdeb01-c24f-46f3-aa1e-b33bcff54735",
+      "parameters": {
+        "operation": "completion",
+        "completionTitle": "Could not watch this flight",
+        "completionMessage": "={{ [].concat($json.body.message ?? `FlightByte answered ${$json.statusCode}`).join(' ') }}"
+      }
+    },
+    {
+      "id": "236896a4-ec17-457e-af2c-3f7f698f4dfb",
+      "name": "Verify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        220
+      ],
+      "parameters": {
+        "content": "## Verify, then answer\nChecks FlightByte's HMAC signature on the raw body, refuses anything older than five minutes, answers `204` and skips retries.",
+        "width": 1340,
+        "height": 440,
+        "color": 7
+      }
+    },
+    {
+      "id": "baeade63-8656-4c23-af29-f28a2d0e9ccb",
+      "name": "FlightByte webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        420
+      ],
+      "webhookId": "05947f95-25eb-4d3c-a576-22e8c56cffc6",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "flightbyte-alerts",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "0ae9a16b-1109-4e4a-a886-1b86c4cb1e85",
+      "name": "Raw body as text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        420
+      ],
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "rawBody",
+        "options": {
+          "keepSource": "json"
+        }
+      }
+    },
+    {
+      "id": "0f8d115b-82d9-48bb-a1af-27d1c150f405",
+      "name": "Sign the raw body",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        440,
+        420
+      ],
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.headers['x-flightbyte-timestamp'] }}.{{ $json.rawBody }}",
+        "dataPropertyName": "expectedSignature",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "698f3113-733f-4324-a9d8-42bc9f50e92b",
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e672841d-7c5f-424b-a4d6-fd57d6d1079d",
+              "leftValue": "={{ $json.expectedSignature }}",
+              "rightValue": "={{ String($json.headers['x-flightbyte-signature'] ?? '').split('v1=')[1] ?? '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "95acc202-b235-4c78-a96f-39af8c6b323c",
+              "leftValue": "={{ Math.abs($now.toSeconds() - Number($json.headers['x-flightbyte-timestamp'])) }}",
+              "rightValue": 300,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1313b336-db1c-4cb9-a9e2-c6f799723776",
+      "name": "Accept (204)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        330
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 204
+        }
+      }
+    },
+    {
+      "id": "40cf3b46-a729-43e4-a892-9af15a2b5a51",
+      "name": "Reject (401)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        510
+      ],
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "83a59d72-c3d8-495b-abfd-b9187967821f",
+      "name": "Skip retries already handled",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        330
+      ],
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.body.id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "3c6b2c9a-ccf2-42e4-a171-e0d2ccebcf05",
+      "name": "Route",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        220
+      ],
+      "parameters": {
+        "content": "## 2. Who hears what\nEdit the list at the top of *Write the messages*. Finished flights leave the table.",
+        "width": 1120,
+        "height": 800,
+        "color": 7
+      }
+    },
+    {
+      "id": "cf7629f1-4071-49fe-ac2a-dfebb4a0cbf4",
+      "name": "Event type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1340,
+        330
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0e9f76f9-35e0-4bfd-aafa-251b24c8e2d9",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "flight.updated",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Flight changed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "0ca50acb-9b56-4066-aab5-44fc94a90369",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "subscription.test",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Test event"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "733c0604-0322-4991-a204-8ccae6fcb234",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "subscription.suspended",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Watch suspended"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "220e70e8-48bd-4d40-a8aa-0f7b42262f6d",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "subscription.completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Watch completed"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4000a45e-570e-4106-a9fa-1484646f2c18",
+      "name": "Look up the passenger",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        330
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_passengers"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subscriptionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.subscriptionId }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "id": "4dc72f75-c9ac-4e17-a5b9-98ddac59ef2f",
+      "name": "Write the messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        330
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Turns one FlightByte event into the messages this workflow can send.\n// Edit the list and the threshold to change who hears about what.\n\n// Change types a passenger hears about by email.\nconst EMAIL_CHANGES = [\n  'flight.cancelled',\n  'flight.diverted',\n  'flight.reinstated',\n  'route.changed',\n  'departure.gate.changed',\n  'departure.terminal.changed',\n  'departure.scheduled.changed',\n  'departure.estimated.changed',\n  'delay.increased',\n];\n// Cancellations and diversions always go out by SMS,\n// and so does an arrival delay of this many minutes or more.\nconst SMS_DELAY_MINUTES = 60;\n\nconst event = $('Event type').item.json.body;\nconst flight = event.flight;\n// The row the form saved; empty when the flight was watched some other way.\nconst contact = { bookingRef: event.metadata?.bookingRef, ...$json };\n// A time moves on the gate and the runway together; keep the gate one when both are there.\n// A status change that comes with \"cancelled\", \"departed\" and the like says nothing more.\nconst all = event.changes ?? [];\nconst changes = all.filter(\n  (change) =>\n    !(change.path.endsWith('Runway') && all.some((other) => other.type === change.type && other.path.endsWith('Gate'))) &&\n    !(change.type === 'status.changed' && all.some((other) => other.type.startsWith('flight.'))),\n);\n\nconst dep = flight.departure;\nconst arr = flight.arrival;\nconst number = `${flight.carrier.iata}${flight.flightNumber}`;\nconst place = (endpoint) => endpoint.airport.city ?? endpoint.airport.iata;\nconst route = `${place(dep)} to ${place(arr)}`;\nconst day = DateTime.fromISO(flight.date).toFormat('d LLL');\n\n// Webhook times are UTC; show them in the airport's own time zone.\nconst clock = (utc, endpoint) =>\n  utc ? DateTime.fromISO(utc).setZone(endpoint.airport.timezone).toFormat('HH:mm') : 'unknown';\nconst best = (endpoint) => {\n  const times = endpoint.times;\n  return (times.actualGate ?? times.estimatedGate ?? times.scheduledGate)?.utc;\n};\n\nfunction describe(change) {\n  const endpoint = change.path.startsWith('arrival') ? arr : dep;\n  const side = endpoint === arr ? 'Arrival' : 'Departure';\n  switch (change.type) {\n    case 'flight.cancelled':\n      return 'The flight is cancelled';\n    case 'flight.diverted':\n      return `The flight is diverted${flight.diverted ? ` to ${place(flight.diverted)}` : ''}`;\n    case 'flight.reinstated':\n      return 'The flight is back on after a cancellation';\n    case 'delay.increased':\n    case 'delay.decreased':\n      return `Arrival delay is now ${change.to} minutes (was ${change.from})`;\n    case 'departure.gate.changed':\n    case 'departure.terminal.changed':\n    case 'arrival.gate.changed':\n    case 'arrival.terminal.changed':\n      return `${side} ${change.type.split('.')[1]} is now ${change.to ?? 'not set'}${change.from ? ` (was ${change.from})` : ''}`;\n    case 'arrival.baggage.changed':\n      return `Baggage belt is ${change.to ?? 'not set'}`;\n  }\n  if (/\\.(scheduled|estimated|actual)\\.changed$/.test(change.type)) {\n    const kind = `${change.type.split('.')[1]}${change.path.endsWith('Runway') ? ' runway' : ''}`;\n    return `${side} time (${kind}) is now ${clock(change.to, endpoint)}${change.from ? `, was ${clock(change.from, endpoint)}` : ''}`;\n  }\n  return change.message;\n}\n\nconst lines = changes.map((change) => `• ${describe(change)}`);\nconst has = (type) => changes.some((change) => change.type === type);\nconst delay = changes.find((change) => change.type === 'delay.increased' && change.to >= SMS_DELAY_MINUTES);\n\nlet headline = `${number} ${route}, ${day}: departs ${clock(best(dep), dep)}`;\nif (dep.terminal) headline += `, terminal ${dep.terminal}`;\nif (dep.gate) headline += `, gate ${dep.gate}`;\nif (has('flight.cancelled')) headline = `${number} ${route} on ${day} is cancelled`;\nelse if (has('flight.diverted')) headline = `${number} ${route} on ${day} is diverted`;\n\nreturn {\n  json: {\n    flight: number,\n    bookingRef: contact.bookingRef ?? '',\n    slackText: [`*${headline}*${contact.bookingRef ? ` (booking ${contact.bookingRef})` : ''}`, ...lines].join('\\n'),\n    sendEmail: Boolean(contact.email) && changes.some((change) => EMAIL_CHANGES.includes(change.type)),\n    emailTo: contact.email ?? '',\n    emailSubject: `Update on your flight ${number} to ${place(arr)}`,\n    emailText: [\n      contact.passengerName ? `Hi ${contact.passengerName},` : 'Hello,',\n      '',\n      `There is an update on your flight ${number} from ${route} on ${day}.`,\n      '',\n      ...lines,\n      '',\n      `${headline}.`,\n      'All times are local to each airport.',\n    ].join('\\n'),\n    sendSms: Boolean(contact.phone) && (has('flight.cancelled') || has('flight.diverted') || Boolean(delay)),\n    smsTo: contact.phone ?? '',\n    smsText: `${headline}.${delay ? ` Arrival delay is now ${delay.to} minutes.` : ''}`,\n  },\n};\n"
+      }
+    },
+    {
+      "id": "e49aa405-41fe-403d-a2ac-ef9841942286",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2000,
+        240
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "2f313db1-bfcf-4cfc-a1b8-bf6bfa49357a",
+      "name": "Email the passenger?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c42bbfa2-5866-480c-a339-853c6726a5e1",
+              "leftValue": "={{ $json.sendEmail }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e3cafeec-411d-4a62-af2a-097e984a1b63",
+      "name": "Email the passenger",
+      "type": "n8n-nodes-base.sendGrid",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        420
+      ],
+      "parameters": {
+        "resource": "mail",
+        "fromEmail": "flights@example.com",
+        "fromName": "Flight updates",
+        "toEmail": "={{ $json.emailTo }}",
+        "subject": "={{ $json.emailSubject }}",
+        "contentValue": "={{ $json.emailText }}",
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "b1e62c6b-c4aa-4d54-a423-5cc470c2a457",
+      "name": "Text the passenger?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "44c2ccfb-0143-4056-a5a4-b8aadd4d6a0f",
+              "leftValue": "={{ $json.sendSms }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2a5933e9-9410-4a96-a31e-ab72283e5805",
+      "name": "Text the passenger",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        2220,
+        600
+      ],
+      "parameters": {
+        "from": "+15550000000",
+        "to": "={{ $json.smsTo }}",
+        "message": "={{ $json.smsText }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "6387d763-1bca-4387-ac8a-21fb7b80163e",
+      "name": "Confirm the test event",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        540
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "text": "=FlightByte test event received for {{ $json.body.subscriptionId }}. Webhooks reach this workflow and the signature checks out.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "882e4155-6e2e-434a-a988-a037eb6c6d20",
+      "name": "Warn about the suspended watch",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        700
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "text": "=FlightByte suspended {{ $json.body.subscriptionId }} after repeated failed deliveries. Fix this workflow, then resume the subscription with POST /v1/subscriptions/{{ $json.body.subscriptionId }}/resume.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "32ee9f60-bc71-4f58-a068-91dbcb806469",
+      "name": "Forget the passenger",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        860
+      ],
+      "parameters": {
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "flightbyte_passengers"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "subscriptionId",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.subscriptionId }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Booking form": {
+      "main": [
+        [
+          {
+            "node": "Make sure the table exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make sure the table exists": {
+      "main": [
+        [
+          {
+            "node": "Build the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the request": {
+      "main": [
+        [
+          {
+            "node": "Watch the flight",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watch the flight": {
+      "main": [
+        [
+          {
+            "node": "Watching?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watching?": {
+      "main": [
+        [
+          {
+            "node": "Remember who to tell",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Show the error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remember who to tell": {
+      "main": [
+        [
+          {
+            "node": "Show the watch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FlightByte webhook": {
+      "main": [
+        [
+          {
+            "node": "Raw body as text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raw body as text": {
+      "main": [
+        [
+          {
+            "node": "Sign the raw body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign the raw body": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept (204)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject (401)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept (204)": {
+      "main": [
+        [
+          {
+            "node": "Skip retries already handled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip retries already handled": {
+      "main": [
+        [
+          {
+            "node": "Event type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event type": {
+      "main": [
+        [
+          {
+            "node": "Look up the passenger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirm the test event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Warn about the suspended watch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forget the passenger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look up the passenger": {
+      "main": [
+        [
+          {
+            "node": "Write the messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write the messages": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email the passenger?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Text the passenger?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email the passenger?": {
+      "main": [
+        [
+          {
+            "node": "Email the passenger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text the passenger?": {
+      "main": [
+        [
+          {
+            "node": "Text the passenger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
