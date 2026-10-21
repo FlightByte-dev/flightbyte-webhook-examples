@@ -1,3 +1,3 @@
-module github.com/batuhanthedeveloper/flightbyte-webhook-examples/go
+module github.com/FlightByte-dev/flightbyte-webhook-examples/go
 
 go 1.22
